@@ -50,6 +50,19 @@ struct DragState {
     last_sent: (i32, i32),
 }
 
+static INPUT_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn input_active() -> bool {
+    INPUT_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_activation_state(window: WebviewWindow, active: bool) {
+    if window.label() == "main" {
+        INPUT_ACTIVE.store(active, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 static DRAG: Mutex<Option<DragState>> = Mutex::new(None);
 static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
@@ -386,6 +399,7 @@ async fn open_platform(
     conversation_id: Option<String>,
     contact_id: Option<String>,
     notifications: Option<bool>,
+    redeem_desktop_pet: Option<bool>,
 ) -> Result<(), String> {
     if window.label() != "main" {
         return Err("platform launcher is available only in the pet window".into());
@@ -396,6 +410,7 @@ async fn open_platform(
             conversation_id,
             contact_id,
             notifications.unwrap_or(false),
+            redeem_desktop_pet.unwrap_or(false),
         )
     })
     .await
@@ -934,6 +949,7 @@ pub fn run() {
             quit_app,
             set_config_cache,
             set_login_state,
+            set_activation_state,
             reset_position,
             toggle_visible,
             set_window_height,

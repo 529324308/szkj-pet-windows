@@ -96,8 +96,9 @@ pub fn spawn(app: tauri::AppHandle) {
                     crate::drag_to(x, y);
                 }
             }
+            let active = visible && crate::input_active();
             for (key, code, was_down) in &mut keys {
-                let down = visible && pressed(*key);
+                let down = active && pressed(*key);
                 if down == *was_down {
                     continue;
                 }

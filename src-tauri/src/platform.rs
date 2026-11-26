@@ -6,6 +6,7 @@ pub fn open(
     conversation_id: Option<String>,
     contact_id: Option<String>,
     notifications: bool,
+    redeem_desktop_pet: bool,
 ) -> Result<(), String> {
     let base = Url::parse(base).map_err(|error| error.to_string())?;
     if !matches!(base.scheme(), "http" | "https") || base.host_str().is_none() {
@@ -16,6 +17,7 @@ pub fn open(
         conversation_id.as_deref(),
         contact_id.as_deref(),
         notifications,
+        redeem_desktop_pet,
     );
     launch(Command::new("rundll32.exe").args(["url.dll,FileProtocolHandler", target.as_str()]))
 }
@@ -25,9 +27,12 @@ fn message_url(
     conversation_id: Option<&str>,
     contact_id: Option<&str>,
     notifications: bool,
+    redeem_desktop_pet: bool,
 ) -> Url {
     let mut target = base.clone();
-    if notifications {
+    if redeem_desktop_pet {
+        target.query_pairs_mut().append_pair("mall", "desktop-pet");
+    } else if notifications {
         // 复用平台已有的通知中心深链，让旧版网页也能打开消息中心。
         target
             .query_pairs_mut()

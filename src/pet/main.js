@@ -8,6 +8,8 @@ const petState = usePetWidgetState();
 // 桌面版入口：只挂桌宠，不加载管理中心、地图和 Cesium。
 const loggedIn = ref(Boolean(localStorage.getItem('accessToken')));
 const notice = ref(null);
+const activated = ref(false);
+let checkingActivation = false;
 // 右下角状态条：账号名 + 连通指示灯（green 已连通 / gray 未登录 / red 失效或超时）。
 const accountName = ref('');
 const petStatus = ref(loggedIn.value ? 'error' : 'offline');
@@ -33,9 +35,12 @@ function tokenExpired(token) {
 /** 清掉宿主与页面里的令牌，回到未登录状态。 */
 async function clearDesktopToken(reason) {
   sessionToken = '';
+  activated.value = false;
   liveUserId = '';
   sessionGeneration += 1;
+  checkingActivation = false;
   realtime?.stop();
+  void reportLoginState(false);
   petState.unbindPetAccount();
   localStorage.removeItem('accessToken');
   try {
@@ -107,6 +112,15 @@ async function handleNoticeAction(kind) {
     notice.value = null;
     return;
   }
+  if (kind === 'redeem') {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('open_platform', { redeemDesktopPet: true }).catch(console.warn);
+    return;
+  }
+  if (kind === 'retry-activation') {
+    await connectWithToken(sessionToken, true);
+    return;
+  }
   if (kind !== 'login') return;
   notice.value = {
     ...notice.value,
@@ -167,44 +181,90 @@ async function bindDesktopPetProfile(token) {
   });
 }
 
-async function connectWithToken(token) {
+function activateNotice(unavailable = false) {
+  clearAutoHide();
+  notice.value = unavailable
+    ? { title: '暂时无法验证桌宠权益', actions: [{ kind: 'retry-activation', label: '重试', primary: true }] }
+    : { title: '账号未激活', actions: [
+      { kind: 'redeem', label: '点击兑换', primary: true },
+      { kind: 'login', label: '切换账号' },
+    ] };
+}
+
+function deactivatePet() {
+  activated.value = false;
+  liveUserId = '';
+  realtime.stop();
+  petState.unbindPetAccount();
+  void reportLoginState(false);
+}
+
+async function verifyEntitlement(token) {
+  const response = await fetch(`${API_BASE}/api/points/mall/desktop-pet`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) throw Object.assign(new Error('暂时无法验证桌宠权益'), { status: response.status });
+  const payload = await response.json();
+  if (payload?.code !== 0 || typeof payload?.data?.active !== 'boolean') {
+    throw new Error('桌宠权益响应无效');
+  }
+  return payload.data.active;
+}
+
+async function connectWithToken(token, recheck = false) {
   const value = String(token || '').trim();
-  if (!value || value === sessionToken) return;
+  if (!value || (value === sessionToken && (!recheck || checkingActivation))) return;
+  const newToken = value !== sessionToken;
   const generation = ++sessionGeneration;
   sessionToken = value;
-  const refreshedUserId = tokenUserId(value);
-  const sameUser = Boolean(liveUserId && liveUserId === refreshedUserId);
-  if (!sameUser) {
-    liveUserId = '';
-    realtime.stop();
-    petState.unbindPetAccount();
+  checkingActivation = true;
+  const userId = tokenUserId(value);
+  if (newToken && (!userId || userId !== liveUserId)) {
+    deactivatePet();
     accountName.value = '';
-    petStatus.value = 'error';
+    notice.value = null;
   }
   localStorage.setItem('accessToken', value);
   localStorage.removeItem('expiresIn');
   localStorage.removeItem('refreshToken');
   try {
-    const account = await resolveAccount(value);
+    const entitled = await verifyEntitlement(value);
     if (generation !== sessionGeneration) return;
-    accountName.value = account.name;
     loggedIn.value = true;
-    clearAutoHide();
-    notice.value = null;
-    if (!sameUser) {
-      liveUserId = refreshedUserId;
+    if (!entitled) {
+      deactivatePet();
+      petStatus.value = 'inactive';
+      activateNotice();
+      return;
+    }
+    const activating = !activated.value;
+    if (activating) {
+      const account = await resolveAccount(value);
+      if (generation !== sessionGeneration) return;
+      accountName.value = account.name;
+      liveUserId = userId;
+      activated.value = true;
       realtime.start(account.userIds);
     }
-    bindDesktopPetProfile(value).catch(() => {});
+    clearAutoHide();
+    notice.value = null;
+    if (newToken || !realtime.connected.value) {
+      petStatus.value = realtime.connected.value ? 'online' : 'error';
+    }
+    if (newToken || activating) bindDesktopPetProfile(value).catch(() => {});
   } catch (error) {
     if (generation !== sessionGeneration) return;
-    if (error.status === 401 || error.status === 403 || tokenExpired(value)) {
+    if (error.status === 401 || tokenExpired(value)) {
       await clearDesktopToken('登录已失效，请重新登录。');
       return;
     }
-    // 保留宿主令牌，由状态轮询或网页推送重试连接。
-    sessionToken = '';
-    if (!realtime.connected.value) petStatus.value = 'error';
+    deactivatePet();
+    petStatus.value = 'error';
+    activateNotice(true);
+  } finally {
+    if (generation === sessionGeneration) checkingActivation = false;
   }
 }
 
@@ -280,11 +340,12 @@ createApp({
   setup() {
     realtime = useDesktopRealtime();
     watch(realtime.connected, (connected) => {
-      if (loggedIn.value) petStatus.value = connected ? 'online' : 'error';
-      void reportLoginState(connected);
+      if (activated.value) petStatus.value = connected ? 'online' : 'error';
+      void reportLoginState(activated.value && connected);
     });
     return () => h(KeyCatWidget, {
       desktop: true,
+      activated: activated.value,
       notice: notice.value,
       accountName: accountName.value,
       status: petStatus.value,
@@ -328,6 +389,8 @@ if (isTauri) {
   void (async () => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
+      watch(activated, value => invoke('set_activation_state', { active: value }).catch(console.warn), { flush: 'sync' });
+      await invoke('set_activation_state', { active: activated.value });
       window.__szkjPetLog = (line) => invoke('debug_log', { line: String(line) }).catch(() => {});
       // 只在挂载或缩放时为气泡预留窗口空间。
       window.__szkjPetFitHeight = (height) => {
@@ -385,7 +448,7 @@ if (isTauri) {
       // 宿主转发回来这里还原成 DOM 事件，让既有行为代码原样生效。
       await listen('pet:input', (event) => {
         const payload = event?.payload;
-        if (!payload) return;
+        if (!payload || !activated.value) return;
         if (payload.kind === 'keydown' || payload.kind === 'keyup' || payload.kind === 'mousemove') {
           // 直接交给挂件里的场景，不再合成 DOM 事件：桌面壳不抢焦点，
           // 合成出来的 KeyboardEvent 到不了场景的按键映射。
@@ -427,6 +490,6 @@ if (isTauri) {
   setInterval(() => {
     const token = localStorage.getItem('accessToken');
     if (token && tokenExpired(token)) void clearDesktopToken('登录已过期，请重新登录。');
-    else if (token && !sessionToken) void connectWithToken(token);
-  }, 10000);
+    else if (token) void connectWithToken(token, true);
+  }, 15000);
 }

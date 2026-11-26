@@ -286,6 +286,7 @@ const {
 // 拖动也从「挪动页面里的盒子」改成「挪动整个窗口」。
 const props = defineProps({
   desktop: { type: Boolean, default: false },
+  activated: { type: Boolean, default: true },
   // 宿主要求挂件弹出的提示气泡（例如「尚未登录平台」+ 操作按钮）。
   notice: { type: Object, default: null },
   // 桌面版右下角状态条：已登录账号名 + 连通指示灯。
@@ -304,6 +305,7 @@ const COATS = [
 ];
 
 const enabled = computed(() => props.desktop || visible.value);
+const sceneEnabled = computed(() => enabled.value && props.activated);
 const wrapRef = ref(null);
 const stageRef = ref(null);
 const bubbleRef = ref(null);
@@ -601,7 +603,7 @@ function syncDesktopHitRect() {
 }
 
 function showBubble(message) {
-  if (!enabled.value || !message) return;
+  if (!sceneEnabled.value || !message) return;
   // 先量盒子再显示，避免用上一帧或零尺寸锚点算出一个跳动的位置。
   measureBubbleAnchor();
   bubble.value = message;
@@ -758,7 +760,7 @@ onMounted(() => {
   }
   // 先按当前视口校正一次已保存的位置，避免换分辨率/换缩放后位置越界导致显示不全。
   syncPositionBounds();
-  if (enabled.value) createScene();
+  if (sceneEnabled.value) createScene();
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('pet:desktop-input', onDesktopInput);
   window.addEventListener('resize', syncPositionBounds);
@@ -785,7 +787,7 @@ watch(
   }),
 );
 
-watch(enabled, next => {
+watch(sceneEnabled, next => {
   if (next) {
     syncPositionBounds();
     nextTick(() => {
@@ -793,6 +795,7 @@ watch(enabled, next => {
       syncDesktopHitRect();
     });
   } else if (behavior) {
+    hideBubble();
     destroyScene();
   }
 });
@@ -828,9 +831,6 @@ function onKeydown(event) {
 // 与真实派发路径不同，之前键盘没反应就是这个原因）。
 function onDesktopInput(event) {
   const payload = event?.detail;
-  if (payload?.kind !== 'mousemove') {
-    window.__szkjPetLog?.(`ui ${payload?.kind} ${payload?.code || ''} scene=${Boolean(behavior)}`);
-  }
   if (!payload || !behavior) return;
   if (payload.kind === 'keydown') {
     const code = String(payload.code || '');
