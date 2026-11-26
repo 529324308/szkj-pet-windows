@@ -1,0 +1,25 @@
+{
+  "name": "szkj-pet-windows",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev:pet": "vite --config vite.pet.config.js",
+    "build:pet": "vite build --config vite.pet.config.js",
+    "desktop:pet": "tauri dev",
+    "desktop:pet:build": "tauri build",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.5",
+    "@tauri-apps/plugin-http": "2.9.0",
+    "three": "0.184.0",
+    "vue": "3.5.46"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.6",
+    "@vitejs/plugin-vue": "5.2.1",
+    "vite": "6.4.6"
+  }
+}

@@ -1,0 +1,9 @@
+/node_modules/
+/dist-pet/
+/src-tauri/target/
+/src-tauri/gen/
+/release/
+/signed-application/
+/signed-installer/
+.env*
+.DS_Store
